@@ -2,12 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Screen = "menu" | "stages" | "upgrades" | "settings" | "battle";
+type Screen = "menu" | "stages" | "upgrades" | "settings" | "loading" | "battle";
 type Overlay = "none" | "pause" | "confirm-exit" | "clear" | "unlock" | "gameover";
 type UnitKind = "gunslinger" | "riot" | "rifleman" | "oniyama" | "hyperman" | "mu";
 type EnemyKind = "office" | "fat" | "executioner" | "sixarm" | "zeus";
 type Anim = "idle" | "walk" | "attack" | "hit" | "death";
 type MuOfferStep = "none" | "eligible" | "offer" | "purchase" | "unlocked";
+type LoadingPhase = "progress" | "hold" | "fade-to-black";
+type BattleEntryFade = "none" | "covered" | "releasing";
+type LoadingCharacterKind =
+  | "gunslinger"
+  | "riot"
+  | "rifleman"
+  | "oniyama"
+  | "hyperman"
+  | "office"
+  | "fat";
 
 type SaveData = {
   unlockedStage: number;
@@ -50,11 +60,51 @@ type LightningStrike = { x: number; age: number; maxAge: number; radius: number 
 const WIDTH = 540;
 const HEIGHT = 960;
 const BATTLE_FLOOR = 590;
+const BASE_ATTACK_X = 92;
+const ZEUS_BASE_DAMAGE = 300;
+const ZEUS_LIGHTNING_RADIUS = 72;
 const DURATION = 180;
 const MAX_ALLIES = 50;
-const TEST_ENEMY_HP_SCALE = 0.5;
 const STORAGE_KEY = "fxxinng-turret-save-v1";
 const UPGRADE_COSTS = [100, 200, 400, 800, 1600];
+
+const STANDARD_ENEMY_STATS: Record<
+  1 | 2 | 3 | 4,
+  Record<"office" | "fat", { hp: number; damage: number }>
+> = {
+  1: { office: { hp: 100, damage: 12 }, fat: { hp: 380, damage: 40 } },
+  2: { office: { hp: 130, damage: 16 }, fat: { hp: 500, damage: 52 } },
+  3: { office: { hp: 170, damage: 21 }, fat: { hp: 650, damage: 66 } },
+  4: { office: { hp: 210, damage: 27 }, fat: { hp: 720, damage: 82 } },
+};
+
+const ELITE_ENEMY_STATS: Record<
+  "executioner" | "sixarm" | "zeus",
+  { hp: number; damage: number; speed: number; range: number; interval: number }
+> = {
+  executioner: { hp: 1800, damage: 100, speed: 5.2, range: 68, interval: 1.75 },
+  sixarm: { hp: 3000, damage: 125, speed: 6, range: 74, interval: 1.45 },
+  zeus: { hp: 100_000, damage: 9999, speed: 6, range: 220, interval: 5 },
+};
+
+const HERO_PATROL_LIMIT_RATIO: Record<UnitKind, number> = {
+  gunslinger: 0.5,
+  riot: 0.58,
+  rifleman: 0.5,
+  oniyama: 0.6,
+  hyperman: 0.61,
+  mu: 0.57,
+};
+const HERO_CHASE_LIMIT_RATIO = 0.7;
+const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
+  gunslinger: 9,
+  riot: 9,
+  rifleman: 9,
+  oniyama: 9,
+  hyperman: 9,
+  mu: 4.5,
+};
+const MU_BATTLE_SPRITE_SIZE = 54;
 
 const DEFAULT_SAVE: SaveData = {
   unlockedStage: 1,
@@ -98,7 +148,7 @@ const UNITS: Record<
   riot: {
     label: "佐藤 剛",
     subtitle: "盾で殴るだけ",
-    cost: 50,
+    cost: 80,
     cooldown: 8,
     hp: 680,
     damage: 25,
@@ -110,7 +160,7 @@ const UNITS: Record<
   rifleman: {
     label: "諸星 虎太郎",
     subtitle: "4連射→休憩",
-    cost: 50,
+    cost: 120,
     cooldown: 10,
     hp: 220,
     damage: 18,
@@ -122,7 +172,7 @@ const UNITS: Record<
   oniyama: {
     label: "鬼山 タケシ",
     subtitle: "長刀・返し二連斬り",
-    cost: 50,
+    cost: 150,
     cooldown: 12,
     hp: 360,
     damage: 72,
@@ -134,7 +184,7 @@ const UNITS: Record<
   hyperman: {
     label: "HYPERMAN",
     subtitle: "前方まとめて555",
-    cost: 50,
+    cost: 500,
     cooldown: 60,
     hp: 9999,
     damage: 555,
@@ -146,7 +196,7 @@ const UNITS: Record<
   mu: {
     label: "ミスター・ムゥ",
     subtitle: "無敵の白い悪魔",
-    cost: 50,
+    cost: 666,
     cooldown: 600,
     hp: 1,
     damage: 30000,
@@ -171,7 +221,25 @@ const FRAME_COUNTS: Record<string, Partial<Record<Anim, number>>> = {
   mu: { idle: 2, walk: 6, attack: 4 },
 };
 
+const LOADING_CHARACTERS: { kind: LoadingCharacterKind; label: string }[] = [
+  { kind: "gunslinger", label: "伊集院 ひろし" },
+  { kind: "riot", label: "佐藤 剛" },
+  { kind: "rifleman", label: "諸星 虎太郎" },
+  { kind: "oniyama", label: "鬼山 タケシ" },
+  { kind: "hyperman", label: "HYPERMAN" },
+  { kind: "office", label: "ノーマルゾンビ" },
+  { kind: "fat", label: "デブゾンビ" },
+];
+
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
+
+function getMainMenuPlayTarget(clearedStages: number[]) {
+  if (!clearedStages.includes(1)) return { stage: 1, label: "ステージ1をプレイ" };
+  if (!clearedStages.includes(2)) return { stage: 2, label: "ステージ2をプレイ" };
+  if (!clearedStages.includes(3)) return { stage: 3, label: "ステージ3をプレイ" };
+  if (!clearedStages.includes(4)) return { stage: 4, label: "ステージ4をプレイ" };
+  return { stage: 4, label: "ステージ4を再プレイ" };
+}
 
 function loadSave(): SaveData {
   if (typeof window === "undefined") return DEFAULT_SAVE;
@@ -228,6 +296,15 @@ export default function Home() {
   const [muOfferStep, setMuOfferStep] = useState<MuOfferStep>("none");
   const [resetConfirm, setResetConfirm] = useState(false);
   const [overlay, setOverlay] = useState<Overlay>("none");
+  const [loadingBattle, setLoadingBattle] = useState<{
+    stage: number;
+    character: (typeof LOADING_CHARACTERS)[number];
+    durationMs: number;
+  } | null>(null);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingFrame, setLoadingFrame] = useState(0);
+  const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>("progress");
+  const [battleEntryFade, setBattleEntryFade] = useState<BattleEntryFade>("none");
   const [timeLeft, setTimeLeft] = useState(DURATION);
   const [coins, setCoins] = useState(100);
   const [baseHp, setBaseHp] = useState(2000);
@@ -353,15 +430,89 @@ export default function Home() {
     [save.upgrades.base, save.upgrades.initialCoins],
   );
 
+  const startBattleWithLoading = useCallback((which: number) => {
+    const character =
+      LOADING_CHARACTERS[Math.floor(Math.random() * LOADING_CHARACTERS.length)];
+    setLoadingBattle({
+      stage: which,
+      character,
+      durationMs: 2000 + Math.random() * 2000,
+    });
+    setLoadingProgress(0);
+    setLoadingFrame(0);
+    setLoadingPhase("progress");
+    setScreen("loading");
+  }, []);
+
+  useEffect(() => {
+    if (screen !== "loading" || !loadingBattle) return;
+    let animationFrame = 0;
+    let holdTimer = 0;
+    let fadeTimer = 0;
+    const startedAt = performance.now();
+    const walkFrameCount = FRAME_COUNTS[loadingBattle.character.kind]?.walk || 1;
+
+    const updateLoading = (now: number) => {
+      const elapsed = now - startedAt;
+      const progress = Math.min(1, elapsed / loadingBattle.durationMs);
+      setLoadingProgress(progress * 100);
+      setLoadingFrame(Math.floor((elapsed / 1000) * 7) % walkFrameCount);
+      if (progress < 1) {
+        animationFrame = requestAnimationFrame(updateLoading);
+        return;
+      }
+
+      setLoadingProgress(100);
+      setLoadingPhase("hold");
+      holdTimer = window.setTimeout(() => {
+        setLoadingPhase("fade-to-black");
+        fadeTimer = window.setTimeout(() => {
+          setBattleEntryFade("covered");
+          startBattle(loadingBattle.stage);
+          setLoadingBattle(null);
+        }, 300);
+      }, 200);
+    };
+
+    animationFrame = requestAnimationFrame(updateLoading);
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      window.clearTimeout(holdTimer);
+      window.clearTimeout(fadeTimer);
+    };
+  }, [loadingBattle, screen, startBattle]);
+
+  useEffect(() => {
+    if (battleEntryFade === "covered") {
+      let releaseFrame = 0;
+      const startFrame = requestAnimationFrame(() => {
+        releaseFrame = requestAnimationFrame(() => setBattleEntryFade("releasing"));
+      });
+      return () => {
+        cancelAnimationFrame(startFrame);
+        cancelAnimationFrame(releaseFrame);
+      };
+    }
+    if (battleEntryFade === "releasing") {
+      const finishTimer = window.setTimeout(() => setBattleEntryFade("none"), 300);
+      return () => window.clearTimeout(finishTimer);
+    }
+  }, [battleEntryFade]);
+
   const addEnemy = useCallback((kind: EnemyKind) => {
     const s = stateRef.current;
-    const stageScale = s.stage === 4 ? 1.62 : s.stage === 3 ? 1.48 : s.stage === 2 ? 1.28 : 1;
-    const fat = kind === "fat";
-    const executioner = kind === "executioner";
-    const sixarm = kind === "sixarm";
-    const zeus = kind === "zeus";
-    const rawHp = zeus ? 100_000 : executioner ? 4600 : sixarm ? 7200 : Math.round((fat ? 440 : 115) * stageScale);
-    const hp = zeus ? rawHp : Math.max(1, Math.round(rawHp * TEST_ENEMY_HP_SCALE));
+    const stage = clamp(s.stage, 1, 4) as 1 | 2 | 3 | 4;
+    const standardStats =
+      kind === "office" || kind === "fat" ? STANDARD_ENEMY_STATS[stage][kind] : null;
+    const eliteStats =
+      kind === "executioner" || kind === "sixarm" || kind === "zeus"
+        ? ELITE_ENEMY_STATS[kind]
+        : null;
+    const hp = standardStats?.hp ?? eliteStats?.hp ?? 1;
+    const damage = standardStats?.damage ?? eliteStats?.damage ?? 1;
+    const speed = kind === "fat" ? 8 : kind === "office" ? 15 : eliteStats?.speed ?? 15;
+    const range = kind === "fat" ? 48 : kind === "office" ? 34 : eliteStats?.range ?? 34;
+    const interval = kind === "fat" ? 1.5 : kind === "office" ? 1.15 : eliteStats?.interval ?? 1.15;
     s.entities.push({
       id: s.nextId++,
       team: "enemy",
@@ -369,10 +520,10 @@ export default function Home() {
       x: WIDTH + 40,
       hp,
       maxHp: hp,
-      speed: zeus ? 6 : executioner ? 5.2 : sixarm ? 6 : fat ? 8 : 15,
-      damage: zeus ? 9999 : executioner ? 135 : sixarm ? 155 : Math.round((fat ? 58 : 17) * stageScale),
-      range: zeus ? 220 : executioner ? 68 : sixarm ? 74 : fat ? 48 : 34,
-      interval: zeus ? 5 : executioner ? 1.75 : sixarm ? 1.45 : fat ? 1.5 : 1.15,
+      speed,
+      damage,
+      range,
+      interval,
       attackClock: 0,
       anim: "walk",
       animClock: Math.random(),
@@ -500,7 +651,8 @@ export default function Home() {
           }
         }
         s.spawnClock -= dt;
-        if (s.spawnClock <= 0 && s.timeLeft > 0) {
+        const normalMobSpawnsStopped = s.stage === 4 && s.bossSpawned;
+        if (s.spawnClock <= 0 && s.timeLeft > 0 && !normalMobSpawnsStopped) {
           const fatChance =
             s.stage === 1 ? (elapsed > 120 ? 0.22 : 0) : elapsed > 40 ? 0.3 : 0.1;
           addEnemy(Math.random() < fatChance ? "fat" : "office");
@@ -568,16 +720,31 @@ export default function Home() {
                   ? undefined
                   : s.entities.find((candidate) => candidate.id === e.attackTargetId && candidate.hp > 0);
               if (e.attackTargetId === -1) {
-                s.baseHp -= e.damage;
+                if (e.kind === "zeus") {
+                  s.lightnings.push({
+                    x: BASE_ATTACK_X,
+                    age: 0,
+                    maxAge: 0.52,
+                    radius: ZEUS_LIGHTNING_RADIUS,
+                  });
+                  s.baseHp -= ZEUS_BASE_DAMAGE;
+                } else {
+                  s.baseHp -= e.damage;
+                }
               } else if (e.kind === "zeus" && target) {
                 const strikeX = clamp(target.x, 48, WIDTH - 42);
-                s.lightnings.push({ x: strikeX, age: 0, maxAge: 0.52, radius: 72 });
+                s.lightnings.push({
+                  x: strikeX,
+                  age: 0,
+                  maxAge: 0.52,
+                  radius: ZEUS_LIGHTNING_RADIUS,
+                });
                 s.entities
                   .filter(
                     (candidate) =>
                       candidate.team === "ally" &&
                       candidate.hp > 0 &&
-                      Math.abs(candidate.x - strikeX) <= 72,
+                      Math.abs(candidate.x - strikeX) <= ZEUS_LIGHTNING_RADIUS,
                   )
                   .forEach((victim) => {
                     if (!victim.invincible) {
@@ -653,8 +820,8 @@ export default function Home() {
             const advancesToFront =
               e.kind === "riot" || e.kind === "oniyama" || e.kind === "hyperman" || e.kind === "mu";
             const isRanged = e.kind === "gunslinger" || e.kind === "rifleman";
-            const patrolLimit = e.kind === "mu" ? WIDTH * 0.61 : WIDTH * 0.65;
-            const chaseLimit = e.kind === "mu" ? WIDTH * 0.61 : WIDTH * 0.82;
+            const patrolLimit = WIDTH * HERO_PATROL_LIMIT_RATIO[e.kind as UnitKind];
+            const chaseLimit = WIDTH * HERO_CHASE_LIMIT_RATIO;
             const targets = alive
               .filter((x) => x.team === "enemy")
               .sort((a, b) => {
@@ -692,14 +859,29 @@ export default function Home() {
                   e.anim = "idle";
                 }
               } else if (target) {
+                const selfCollisionRadius = HERO_COLLISION_RADIUS[e.kind as UnitKind];
                 const nearestAllyAhead = alive
-                  .filter((x) => x.team === "ally" && x.id !== e.id && x.x > e.x && x.x - e.x < 28)
+                  .filter((x) => {
+                    if (x.team !== "ally" || x.id === e.id || x.x <= e.x) return false;
+                    const combinedRadius =
+                      selfCollisionRadius + HERO_COLLISION_RADIUS[x.kind as UnitKind];
+                    return x.x - e.x < combinedRadius + 10;
+                  })
                   .sort((a, b) => a.x - b.x)[0];
                 const formationLimit = WIDTH * 0.43;
+                const collisionLimit = nearestAllyAhead
+                  ? nearestAllyAhead.x -
+                    (selfCollisionRadius +
+                      HERO_COLLISION_RADIUS[nearestAllyAhead.kind as UnitKind])
+                  : chaseLimit;
                 const moveLimit = advancesToFront
-                  ? Math.min(chaseLimit, target.x - e.range)
+                  ? Math.min(
+                      chaseLimit,
+                      target.x - e.range,
+                      e.kind === "mu" ? collisionLimit : chaseLimit,
+                    )
                   : nearestAllyAhead
-                      ? Math.min(formationLimit, nearestAllyAhead.x - 18)
+                      ? Math.min(formationLimit, collisionLimit)
                       : formationLimit;
                 if (e.x < moveLimit) {
                   e.x = Math.min(moveLimit, e.x + e.speed * dt);
@@ -715,6 +897,7 @@ export default function Home() {
               }
             }
           } else {
+            const hasLivingAllies = alive.some((x) => x.team === "ally");
             const targets = alive
               .filter((x) => x.team === "ally" && x.x <= e.x + 10)
               .sort((a, b) => b.x - a.x);
@@ -733,7 +916,12 @@ export default function Home() {
               } else {
                 e.anim = "idle";
               }
-            } else if (!target && e.x <= 92) {
+            } else if (
+              !target &&
+              (e.kind === "zeus"
+                ? !hasLivingAllies && Math.abs(e.x - BASE_ATTACK_X) <= e.range
+                : e.x <= BASE_ATTACK_X)
+            ) {
               if (e.attackClock <= 0) {
                 e.attackClock = e.interval;
                 e.attackElapsed = 0;
@@ -855,8 +1043,38 @@ export default function Home() {
     window.location.reload();
   };
 
+  const mainMenuPlayTarget = getMainMenuPlayTarget(save.clearedStages);
+
   return (
     <main className="game-page">
+      {screen === "loading" && loadingBattle && (
+        <section
+          className={`loading-screen loading-${loadingPhase}`}
+          aria-label={`${loadingBattle.character.label}を表示中。戦闘を読み込んでいます`}
+        >
+          <div className="loading-content">
+            <div className="loading-character-frame" aria-hidden="true">
+              {/* Existing sprite frames must swap immediately during the walk animation. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/game/sprites/${loadingBattle.character.kind}/walk/${String(loadingFrame).padStart(2, "0")}.png`}
+                alt=""
+              />
+            </div>
+            <p>Now Loading...</p>
+            <div
+              className="loading-progress"
+              role="progressbar"
+              aria-label="ロード進捗"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(loadingProgress)}
+            >
+              <i style={{ width: `${loadingProgress}%` }} />
+            </div>
+          </div>
+        </section>
+      )}
       <div className="phone-shell">
         {screen === "menu" && (
           <section className="menu-screen">
@@ -870,10 +1088,13 @@ export default function Home() {
               全進捗リセット
             </button>
             <nav className="main-nav">
-              <button className="primary-menu" onClick={() => startBattle(save.unlockedStage)}>
-                <small>CONTINUE</small>
-                続きからプレイ
-                <b>STAGE {String(save.unlockedStage).padStart(2, "0")}</b>
+              <button
+                className="primary-menu"
+                onClick={() => startBattleWithLoading(mainMenuPlayTarget.stage)}
+              >
+                <small>PLAY</small>
+                {mainMenuPlayTarget.label}
+                <b>STAGE {String(mainMenuPlayTarget.stage).padStart(2, "0")}</b>
               </button>
               <button onClick={() => setScreen("stages")}>ステージ選択 <span>›</span></button>
               <button onClick={() => setScreen("upgrades")}>部隊強化 <span>›</span></button>
@@ -1089,6 +1310,12 @@ export default function Home() {
           </div>
         )}
       </div>
+      {battleEntryFade !== "none" && (
+        <div
+          className={`battle-entry-fade battle-entry-${battleEntryFade}`}
+          aria-hidden="true"
+        />
+      )}
     </main>
   );
 }
@@ -1282,12 +1509,12 @@ function drawGame(
               : e.kind === "hyperman"
                 ? 114
                 : e.kind === "mu"
-                  ? 108
-                : e.kind === "oniyama"
-                  ? 184
-                : e.kind === "gunslinger"
-                  ? 98
-                : 106;
+                  ? MU_BATTLE_SPRITE_SIZE
+                  : e.kind === "oniyama"
+                    ? 184
+                    : e.kind === "gunslinger"
+                      ? 98
+                      : 106;
     const x = e.x - size / 2;
     const bob = e.kind === "zeus" ? Math.sin(e.animClock * Math.PI * 1.25) * 4 : 0;
     const y = BATTLE_FLOOR - size + bob;
