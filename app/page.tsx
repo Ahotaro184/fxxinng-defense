@@ -8,6 +8,7 @@ type UnitKind = "gunslinger" | "riot" | "rifleman" | "oniyama" | "hyperman" | "m
 type EnemyKind = "office" | "fat" | "executioner" | "sixarm" | "zeus";
 type Anim = "idle" | "walk" | "attack" | "hit" | "death";
 type MuOfferStep = "none" | "eligible" | "offer" | "purchase" | "unlocked";
+type HeroUnlockName = "鬼山 タケシ" | "HYPERMAN";
 type LoadingPhase = "progress" | "hold" | "fade-to-black";
 type BattleEntryFade = "none" | "covered" | "releasing";
 type LoadingCharacterKind =
@@ -22,7 +23,7 @@ type LoadingCharacterKind =
 type SaveData = {
   unlockedStage: number;
   clearedStages: number[];
-  seenHeroUnlocks: string[];
+  seenHeroUnlocks: HeroUnlockName[];
   materials: number;
   bankCoins: number;
   muUnlocked: boolean;
@@ -184,8 +185,8 @@ const UNITS: Record<
   hyperman: {
     label: "HYPERMAN",
     subtitle: "前方まとめて555",
-    cost: 500,
-    cooldown: 60,
+    cost: 300,
+    cooldown: 30,
     hp: 9999,
     damage: 555,
     speed: 12,
@@ -241,6 +242,17 @@ function getMainMenuPlayTarget(clearedStages: number[]) {
   return { stage: 4, label: "ステージ4を再プレイ" };
 }
 
+function isUnitUnlocked(
+  kind: UnitKind,
+  clearedStages: number[],
+  muUnlocked: boolean,
+) {
+  if (kind === "oniyama") return clearedStages.includes(1);
+  if (kind === "hyperman") return clearedStages.includes(2);
+  if (kind === "mu") return muUnlocked;
+  return true;
+}
+
 function loadSave(): SaveData {
   if (typeof window === "undefined") return DEFAULT_SAVE;
   try {
@@ -252,6 +264,26 @@ function loadSave(): SaveData {
       : Number(parsed.unlockedStage) >= 2
         ? [1]
         : [];
+    const seenHeroUnlocks = (
+      Array.isArray(parsed.seenHeroUnlocks)
+        ? parsed.seenHeroUnlocks
+            .map((name: unknown) => {
+              if (name === "鬼山武士" || name === "鬼山 武士") return "鬼山 タケシ";
+              if (name === "ハイパーマン") return "HYPERMAN";
+              return name;
+            })
+            .filter(
+              (name: unknown): name is HeroUnlockName =>
+                name === "鬼山 タケシ" || name === "HYPERMAN",
+            )
+        : []
+    );
+    if (clearedStages.includes(1) && !seenHeroUnlocks.includes("鬼山 タケシ")) {
+      seenHeroUnlocks.push("鬼山 タケシ");
+    }
+    if (clearedStages.includes(2) && !seenHeroUnlocks.includes("HYPERMAN")) {
+      seenHeroUnlocks.push("HYPERMAN");
+    }
     return {
       unlockedStage: clamp(
         Math.max(Number(parsed.unlockedStage) || 1, clearedStages.includes(3) ? 4 : 1),
@@ -259,13 +291,7 @@ function loadSave(): SaveData {
         4,
       ),
       clearedStages,
-      seenHeroUnlocks: Array.isArray(parsed.seenHeroUnlocks)
-        ? parsed.seenHeroUnlocks
-            .map((name: unknown) =>
-              name === "鬼山武士" || name === "鬼山 武士" ? "鬼山 タケシ" : name
-            )
-            .filter((name: unknown) => name === "鬼山 タケシ" || name === "ハイパーマン")
-        : [],
+      seenHeroUnlocks,
       materials: Math.max(0, Number(parsed.materials) || 0),
       bankCoins: Math.max(0, Number(parsed.bankCoins) || 0),
       muUnlocked: Boolean(parsed.muUnlocked),
@@ -319,7 +345,7 @@ export default function Home() {
     mu: 0,
   });
   const [reward, setReward] = useState(0);
-  const [unlockedHero, setUnlockedHero] = useState<"鬼山 タケシ" | "ハイパーマン" | null>(null);
+  const [unlockedHero, setUnlockedHero] = useState<HeroUnlockName | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({
     entities: [] as Entity[],
@@ -536,11 +562,7 @@ export default function Home() {
       if (screen !== "battle" || overlay !== "none") return;
       const s = stateRef.current;
       const cfg = UNITS[kind];
-      if (
-        (kind === "oniyama" && !save.clearedStages.includes(2)) ||
-        (kind === "hyperman" && !save.clearedStages.includes(3)) ||
-        (kind === "mu" && !save.muUnlocked)
-      ) return;
+      if (!isUnitUnlocked(kind, save.clearedStages, save.muUnlocked)) return;
       const livingAllies = s.entities.filter((e) => e.team === "ally" && e.hp > 0).length;
       if (s.coins < cfg.cost || s.cooldowns[kind] > 0 || !s.running || livingAllies >= MAX_ALLIES) return;
       const hp = cfg.hp;
@@ -577,7 +599,8 @@ export default function Home() {
     s.finishing = true;
     s.running = false;
     const earned = s.stage === 1 ? 100 : s.stage === 2 ? 180 : s.stage === 3 ? 300 : 500;
-    const heroName = s.stage === 2 ? "鬼山 タケシ" : s.stage === 3 ? "ハイパーマン" : null;
+    const heroName: HeroUnlockName | null =
+      s.stage === 1 ? "鬼山 タケシ" : s.stage === 2 ? "HYPERMAN" : null;
     const hero = heroName && !save.seenHeroUnlocks.includes(heroName) ? heroName : null;
     setReward(earned);
     setUnlockedHero(hero);
@@ -1201,10 +1224,11 @@ export default function Home() {
                   const cfg = UNITS[kind];
                   const cd = cooldowns[kind];
                   const atMax = allyCount >= MAX_ALLIES;
-                  const locked =
-                    (kind === "oniyama" && !save.clearedStages.includes(2)) ||
-                    (kind === "hyperman" && !save.clearedStages.includes(3)) ||
-                    (kind === "mu" && !save.muUnlocked);
+                  const locked = !isUnitUnlocked(
+                    kind,
+                    save.clearedStages,
+                    save.muUnlocked,
+                  );
                   const disabled = locked || coins < cfg.cost || cd > 0 || overlay !== "none" || atMax;
                   return (
                     <button key={kind} className={`unit-card unit-card-${kind}`} disabled={disabled} onClick={() => deploy(kind)}>
