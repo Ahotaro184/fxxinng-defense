@@ -35,9 +35,11 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 }
 
 .loading-screen {
-  position: fixed;
+  position: absolute;
   z-index: 100;
   inset: 0;
+  width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -52,7 +54,7 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
   justify-items: center;
   transition: opacity .3s linear;
 }
-.loading-fade-to-black .loading-content { opacity: 0; }
+.loading-phase-fade-to-black .loading-content { opacity: 0; }
 .loading-character-frame {
   width: clamp(150px, 32vmin, 250px);
   height: clamp(150px, 32vmin, 250px);

@@ -89,13 +89,14 @@ const ELITE_ENEMY_STATS: Record<
 };
 
 const HERO_PATROL_LIMIT_RATIO: Record<UnitKind, number> = {
-  gunslinger: 0.5,
+  gunslinger: 0.48,
   riot: 0.58,
-  rifleman: 0.5,
+  rifleman: 0.48,
   oniyama: 0.6,
   hyperman: 0.61,
   mu: 0.57,
 };
+const RANGED_HERO_LIMIT_RATIO = 0.48;
 const HERO_CHASE_LIMIT_RATIO = 0.7;
 const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
   gunslinger: 9,
@@ -142,7 +143,7 @@ const UNITS: Record<
     hp: 160,
     damage: 34,
     speed: 12.5,
-    range: 220,
+    range: 170,
     interval: 2,
     card: "/game/cards/gunslinger.png",
   },
@@ -166,7 +167,7 @@ const UNITS: Record<
     hp: 220,
     damage: 18,
     speed: 11,
-    range: 265,
+    range: 190,
     interval: 2,
     card: "/game/cards/rifleman.png",
   },
@@ -347,6 +348,7 @@ export default function Home() {
   const [reward, setReward] = useState(0);
   const [unlockedHero, setUnlockedHero] = useState<HeroUnlockName | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const loadingRequestIdRef = useRef(0);
   const stateRef = useRef({
     entities: [] as Entity[],
     explosions: [] as Explosion[],
@@ -456,19 +458,44 @@ export default function Home() {
     [save.upgrades.base, save.upgrades.initialCoins],
   );
 
-  const startBattleWithLoading = useCallback((which: number) => {
-    const character =
-      LOADING_CHARACTERS[Math.floor(Math.random() * LOADING_CHARACTERS.length)];
-    setLoadingBattle({
-      stage: which,
-      character,
-      durationMs: 2000 + Math.random() * 2000,
-    });
-    setLoadingProgress(0);
-    setLoadingFrame(0);
-    setLoadingPhase("progress");
-    setScreen("loading");
-  }, []);
+  const startBattleWithLoading = useCallback(
+    (which: number) => {
+      const requestId = ++loadingRequestIdRef.current;
+      const character =
+        LOADING_CHARACTERS[Math.floor(Math.random() * LOADING_CHARACTERS.length)];
+      const durationMs = 2000 + Math.random() * 2000;
+      const firstFrame = image(`/game/sprites/${character.kind}/walk/00.png`);
+
+      const revealLoadingScreen = async () => {
+        if (!firstFrame.complete) {
+          await new Promise<void>((resolve) => {
+            const finishWaiting = () => {
+              firstFrame.removeEventListener("load", finishWaiting);
+              firstFrame.removeEventListener("error", finishWaiting);
+              resolve();
+            };
+            firstFrame.addEventListener("load", finishWaiting);
+            firstFrame.addEventListener("error", finishWaiting);
+            if (firstFrame.complete) finishWaiting();
+          });
+        }
+        try {
+          await firstFrame.decode();
+        } catch {
+          if (firstFrame.naturalWidth === 0) return;
+        }
+        if (requestId !== loadingRequestIdRef.current) return;
+        setLoadingBattle({ stage: which, character, durationMs });
+        setLoadingProgress(0);
+        setLoadingFrame(0);
+        setLoadingPhase("progress");
+        setScreen("loading");
+      };
+
+      void revealLoadingScreen();
+    },
+    [image],
+  );
 
   useEffect(() => {
     if (screen !== "loading" || !loadingBattle) return;
@@ -844,7 +871,8 @@ export default function Home() {
               e.kind === "riot" || e.kind === "oniyama" || e.kind === "hyperman" || e.kind === "mu";
             const isRanged = e.kind === "gunslinger" || e.kind === "rifleman";
             const patrolLimit = WIDTH * HERO_PATROL_LIMIT_RATIO[e.kind as UnitKind];
-            const chaseLimit = WIDTH * HERO_CHASE_LIMIT_RATIO;
+            const chaseLimit =
+              WIDTH * (isRanged ? RANGED_HERO_LIMIT_RATIO : HERO_CHASE_LIMIT_RATIO);
             const targets = alive
               .filter((x) => x.team === "enemy")
               .sort((a, b) => {
@@ -1070,35 +1098,35 @@ export default function Home() {
 
   return (
     <main className="game-page">
-      {screen === "loading" && loadingBattle && (
-        <section
-          className={`loading-screen loading-${loadingPhase}`}
-          aria-label={`${loadingBattle.character.label}を表示中。戦闘を読み込んでいます`}
-        >
-          <div className="loading-content">
-            <div className="loading-character-frame" aria-hidden="true">
-              {/* Existing sprite frames must swap immediately during the walk animation. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/game/sprites/${loadingBattle.character.kind}/walk/${String(loadingFrame).padStart(2, "0")}.png`}
-                alt=""
-              />
-            </div>
-            <p>Now Loading...</p>
-            <div
-              className="loading-progress"
-              role="progressbar"
-              aria-label="ロード進捗"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(loadingProgress)}
-            >
-              <i style={{ width: `${loadingProgress}%` }} />
-            </div>
-          </div>
-        </section>
-      )}
       <div className="phone-shell">
+        {screen === "loading" && loadingBattle && (
+          <section
+            className={`loading-screen loading-phase-${loadingPhase}`}
+            aria-label={`${loadingBattle.character.label}を表示中。戦闘を読み込んでいます`}
+          >
+            <div className="loading-content">
+              <div className="loading-character-frame" aria-hidden="true">
+                {/* Existing sprite frames must swap immediately during the walk animation. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/game/sprites/${loadingBattle.character.kind}/walk/${String(loadingFrame).padStart(2, "0")}.png`}
+                  alt=""
+                />
+              </div>
+              <p>Now Loading...</p>
+              <div
+                className="loading-progress"
+                role="progressbar"
+                aria-label="ロード進捗"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(loadingProgress)}
+              >
+                <i style={{ width: `${loadingProgress}%` }} />
+              </div>
+            </div>
+          </section>
+        )}
         {screen === "menu" && (
           <section className="menu-screen">
             <div className="menu-shade" />
@@ -1134,25 +1162,25 @@ export default function Home() {
                 stage={1}
                 cleared={save.clearedStages.includes(1)}
                 locked={false}
-                onSelect={() => startBattle(1)}
+                onSelect={() => startBattleWithLoading(1)}
               />
               <StageCard
                 stage={2}
                 cleared={save.clearedStages.includes(2)}
                 locked={save.unlockedStage < 2}
-                onSelect={() => startBattle(2)}
+                onSelect={() => startBattleWithLoading(2)}
               />
               <StageCard
                 stage={3}
                 cleared={save.clearedStages.includes(3)}
                 locked={save.unlockedStage < 3}
-                onSelect={() => startBattle(3)}
+                onSelect={() => startBattleWithLoading(3)}
               />
               <StageCard
                 stage={4}
                 cleared={save.clearedStages.includes(4)}
                 locked={save.unlockedStage < 4}
-                onSelect={() => startBattle(4)}
+                onSelect={() => startBattleWithLoading(4)}
               />
             </div>
           </SubScreen>
