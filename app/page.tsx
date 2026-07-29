@@ -50,6 +50,7 @@ type Entity = {
   maxHp: number;
   speed: number;
   damage: number;
+  secondHitDamage?: number;
   range: number;
   interval: number;
   attackClock: number;
@@ -121,6 +122,9 @@ const HERO_PATROL_LIMIT_RATIO: Record<UnitKind, number> = {
 };
 const RANGED_HERO_LIMIT_RATIO = 0.6;
 const HERO_CHASE_LIMIT_RATIO = 0.68;
+const ONIYAMA_FIRST_HIT_DAMAGE = 108;
+const ONIYAMA_SECOND_HIT_DAMAGE = 135;
+const ONIYAMA_AREA_RADIUS = 60;
 const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
   gunslinger: 9,
   riot: 9,
@@ -201,7 +205,7 @@ const UNITS: Record<
     cost: 150,
     cooldown: 12,
     hp: 700,
-    damage: 72,
+    damage: ONIYAMA_FIRST_HIT_DAMAGE,
     speed: 10.5,
     range: 74,
     interval: 2.1,
@@ -730,6 +734,7 @@ export default function Home() {
       const livingAllies = s.entities.filter((e) => e.team === "ally" && e.hp > 0).length;
       if (s.coins < cfg.cost || s.cooldowns[kind] > 0 || !s.running || livingAllies >= MAX_ALLIES) return;
       const hp = cfg.hp;
+      const attackScale = 1 + save.upgrades.attack * 0.1;
       s.coins -= cfg.cost;
       s.cooldowns[kind] = cfg.cooldown;
       s.entities.push({
@@ -740,7 +745,9 @@ export default function Home() {
         hp,
         maxHp: hp,
         speed: cfg.speed,
-        damage: cfg.damage * (1 + save.upgrades.attack * 0.1),
+        damage: cfg.damage * attackScale,
+        secondHitDamage:
+          kind === "oniyama" ? ONIYAMA_SECOND_HIT_DAMAGE * attackScale : undefined,
         range: cfg.range,
         interval: cfg.interval,
         attackClock: 0,
@@ -1021,15 +1028,36 @@ export default function Home() {
                   maxAge: 0.42,
                   kind: "cute",
                 });
-              } else if (target) {
+              } else if (e.kind === "oniyama") {
                 const hitIndex = e.appliedHits || 0;
-                const damage = e.kind === "oniyama" && hitIndex === 1 ? e.damage * 1.25 : e.damage;
-                if (!target.invincible) {
-                  target.hp -= damage;
-                  target.hitFlash = 0.12;
+                const strikeX = target?.x ?? e.attackTargetX;
+                if (strikeX !== undefined && Number.isFinite(strikeX)) {
+                  e.attackTargetX = strikeX;
+                  const damage =
+                    hitIndex === 0
+                      ? e.damage
+                      : e.secondHitDamage ?? ONIYAMA_SECOND_HIT_DAMAGE;
+                  s.entities
+                    .filter(
+                      (candidate) =>
+                        candidate.team === "enemy" &&
+                        candidate.hp > 0 &&
+                        Math.abs(candidate.x - strikeX) <= ONIYAMA_AREA_RADIUS,
+                    )
+                    .forEach((victim) => {
+                      if (!victim.invincible) {
+                        victim.hp -= damage;
+                        victim.hitFlash = 0.12;
+                      }
+                      if (hitIndex === 1 && victim.kind === "office") {
+                        victim.x = Math.min(WIDTH + 20, victim.x + 18);
+                      }
+                    });
                 }
-                if (e.kind === "oniyama" && hitIndex === 1 && target.kind === "office") {
-                  target.x = Math.min(WIDTH + 20, target.x + 18);
+              } else if (target) {
+                if (!target.invincible) {
+                  target.hp -= e.damage;
+                  target.hitFlash = 0.12;
                 }
               }
               e.appliedHits = (e.appliedHits || 0) + 1;
@@ -1073,7 +1101,8 @@ export default function Home() {
                 e.attackClock = e.interval;
                 e.attackElapsed = 0;
                 e.attackTargetId = target.id;
-                e.attackTargetX = e.kind === "blade" ? target.x : undefined;
+                e.attackTargetX =
+                  e.kind === "blade" || e.kind === "oniyama" ? target.x : undefined;
                 e.appliedHits = 0;
                 e.anim = "attack";
                 e.animClock = 0;
@@ -1690,8 +1719,6 @@ function StageCard({
         {stage === 5 && <img src="/game/sprites/zeus/idle/00.png" alt="" />}
       </span>
       <span className="stage-card-info">
-        {stage === 4 && <strong>通常軍を突破しBladeを討て</strong>}
-        {stage === 5 && <strong>最終決戦・ゼウスゾンビ</strong>}
         <em>{cleared ? "✓ クリア済み" : locked ? "未解放" : "未クリア"}</em>
       </span>
       {locked && <span className="stage-lock" aria-hidden="true">🔒</span>}
