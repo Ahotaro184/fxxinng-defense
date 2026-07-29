@@ -200,6 +200,12 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 .stage-card:nth-child(3) .stage-card-bg {
   filter: hue-rotate(28deg) saturate(1.15) brightness(.8);
 }
+.stage-card:nth-child(4) .stage-card-bg {
+  filter: hue-rotate(28deg) saturate(1.15) brightness(.8);
+}
+.stage-card:nth-child(5) .stage-card-bg {
+  filter: sepia(.34) saturate(1.28) brightness(.75);
+}
 .stage-card-number {
   position: absolute;
   z-index: 2;
@@ -238,15 +244,17 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 .stage-enemies-2 img:last-child {
   width: 82%;
 }
-.stage-enemies-3 img:first-child {
+.stage-enemies-3 img:first-child,
+.stage-enemies-4 img:first-child {
   width: 61%;
   margin-right: -12%;
 }
-.stage-enemies-3 img:last-child {
+.stage-enemies-3 img:last-child,
+.stage-enemies-4 img:last-child {
   width: 72%;
   margin-left: -12%;
 }
-.stage-enemies-4 img {
+.stage-enemies-5 img {
   width: 92%;
   height: 108%;
 }

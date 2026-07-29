@@ -1,11 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  BLADE_ATTACK_HIT_TIME,
+  BLADE_CONFIG,
+  BLADE_DEATH_REMOVE_AFTER,
+  createGroundSpike,
+  getBladeAreaVictims,
+  getGroundSpikeVisual,
+} from "./blade-rules.mjs";
 
 type Screen = "menu" | "stages" | "upgrades" | "settings" | "loading" | "battle";
 type Overlay = "none" | "pause" | "confirm-exit" | "clear" | "unlock" | "gameover";
 type UnitKind = "gunslinger" | "riot" | "rifleman" | "oniyama" | "hyperman" | "mu";
-type EnemyKind = "office" | "fat" | "executioner" | "sixarm" | "zeus";
+type EnemyKind = "office" | "fat" | "executioner" | "sixarm" | "zeus" | "blade";
 type Anim = "idle" | "walk" | "attack" | "hit" | "death";
 type MuOfferStep = "none" | "eligible" | "offer" | "purchase" | "unlocked";
 type HeroUnlockName = "鬼山 タケシ" | "HYPERMAN";
@@ -21,13 +29,14 @@ type LoadingCharacterKind =
   | "fat";
 
 type SaveData = {
+  version: 2;
   unlockedStage: number;
   clearedStages: number[];
   seenHeroUnlocks: HeroUnlockName[];
   materials: number;
   bankCoins: number;
   muUnlocked: boolean;
-  muFirstStage4Loss: boolean;
+  muOfferPending: boolean;
   muOfferStep: MuOfferStep;
   upgrades: { attack: number; coins: number; base: number; initialCoins: number };
 };
@@ -50,42 +59,55 @@ type Entity = {
   deadClock?: number;
   attackElapsed?: number;
   attackTargetId?: number;
+  attackTargetX?: number;
   appliedHits?: number;
   invincible?: boolean;
+  isBoss?: boolean;
+  deathFinalFrameDrawn?: boolean;
 };
 
 type Explosion = { x: number; y: number; age: number; maxAge: number; kind?: "normal" | "cute" };
 type Shockwave = { x: number; y: number; age: number; maxAge: number };
 type LightningStrike = { x: number; age: number; maxAge: number; radius: number };
+type GroundSpike = { x: number; age: number; maxAge: number; radius: number };
 
 const WIDTH = 540;
 const HEIGHT = 960;
 const BATTLE_FLOOR = 590;
 const BASE_ATTACK_X = 92;
-const ZEUS_BASE_DAMAGE = 300;
+const ZEUS_BASE_DAMAGE = 1800;
 const ZEUS_LIGHTNING_RADIUS = 72;
 const DURATION = 180;
 const MAX_ALLIES = 50;
+const MAX_BATTLE_COINS = 999;
 const STORAGE_KEY = "fxxinng-turret-save-v1";
 const UPGRADE_COSTS = [100, 200, 400, 800, 1600];
 
 const STANDARD_ENEMY_STATS: Record<
-  1 | 2 | 3 | 4,
+  1 | 2 | 3 | 4 | 5,
   Record<"office" | "fat", { hp: number; damage: number }>
 > = {
   1: { office: { hp: 100, damage: 12 }, fat: { hp: 380, damage: 40 } },
   2: { office: { hp: 130, damage: 16 }, fat: { hp: 500, damage: 52 } },
   3: { office: { hp: 170, damage: 21 }, fat: { hp: 650, damage: 66 } },
   4: { office: { hp: 210, damage: 27 }, fat: { hp: 720, damage: 82 } },
+  5: { office: { hp: 210, damage: 27 }, fat: { hp: 720, damage: 82 } },
 };
 
 const ELITE_ENEMY_STATS: Record<
-  "executioner" | "sixarm" | "zeus",
+  "executioner" | "sixarm" | "zeus" | "blade",
   { hp: number; damage: number; speed: number; range: number; interval: number }
 > = {
   executioner: { hp: 1800, damage: 100, speed: 5.2, range: 68, interval: 1.75 },
   sixarm: { hp: 3000, damage: 125, speed: 6, range: 74, interval: 1.45 },
   zeus: { hp: 100_000, damage: 9999, speed: 6, range: 220, interval: 5 },
+  blade: {
+    hp: BLADE_CONFIG.hp,
+    damage: BLADE_CONFIG.damage,
+    speed: BLADE_CONFIG.speed,
+    range: BLADE_CONFIG.range,
+    interval: BLADE_CONFIG.interval,
+  },
 };
 
 const HERO_PATROL_LIMIT_RATIO: Record<UnitKind, number> = {
@@ -109,13 +131,14 @@ const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
 const MU_BATTLE_SPRITE_SIZE = 54;
 
 const DEFAULT_SAVE: SaveData = {
+  version: 2,
   unlockedStage: 1,
   clearedStages: [],
   seenHeroUnlocks: [],
   materials: 0,
   bankCoins: 0,
   muUnlocked: false,
-  muFirstStage4Loss: false,
+  muOfferPending: false,
   muOfferStep: "none",
   upgrades: { attack: 0, coins: 0, base: 0, initialCoins: 0 },
 };
@@ -152,7 +175,7 @@ const UNITS: Record<
     subtitle: "盾で殴るだけ",
     cost: 80,
     cooldown: 8,
-    hp: 680,
+    hp: 1200,
     damage: 25,
     speed: 9,
     range: 42,
@@ -176,7 +199,7 @@ const UNITS: Record<
     subtitle: "長刀・返し二連斬り",
     cost: 150,
     cooldown: 12,
-    hp: 360,
+    hp: 700,
     damage: 72,
     speed: 10.5,
     range: 74,
@@ -205,7 +228,7 @@ const UNITS: Record<
     speed: 9,
     range: 70,
     interval: 2,
-    card: "/game/cards/mu.png",
+    card: "/game/ui/portraits/muu.png",
   },
 };
 
@@ -218,6 +241,7 @@ const FRAME_COUNTS: Record<string, Partial<Record<Anim, number>>> = {
   executioner: { idle: 4, walk: 6, attack: 6, death: 6 },
   sixarm: { idle: 4, walk: 6, attack: 6, death: 6 },
   zeus: { idle: 1, walk: 3, attack: 4, death: 1 },
+  blade: BLADE_CONFIG.frames,
   oniyama: { idle: 2, walk: 8, attack: 14, death: 4 },
   hyperman: { idle: 2, walk: 3, attack: 6, death: 5 },
   mu: { idle: 2, walk: 6, attack: 4 },
@@ -240,18 +264,59 @@ function getMainMenuPlayTarget(clearedStages: number[]) {
   if (!clearedStages.includes(2)) return { stage: 2, label: "ステージ2をプレイ" };
   if (!clearedStages.includes(3)) return { stage: 3, label: "ステージ3をプレイ" };
   if (!clearedStages.includes(4)) return { stage: 4, label: "ステージ4をプレイ" };
-  return { stage: 4, label: "ステージ4を再プレイ" };
+  if (!clearedStages.includes(5)) return { stage: 5, label: "ステージ5をプレイ" };
+  return { stage: 5, label: "ステージ5を再プレイ" };
 }
 
 function isUnitUnlocked(
   kind: UnitKind,
   clearedStages: number[],
   muUnlocked: boolean,
+  seenHeroUnlocks: HeroUnlockName[],
 ) {
-  if (kind === "oniyama") return clearedStages.includes(1);
-  if (kind === "hyperman") return clearedStages.includes(2);
+  if (kind === "oniyama") {
+    return clearedStages.includes(2) || seenHeroUnlocks.includes("鬼山 タケシ");
+  }
+  if (kind === "hyperman") {
+    return clearedStages.includes(3) || seenHeroUnlocks.includes("HYPERMAN");
+  }
   if (kind === "mu") return muUnlocked;
   return true;
+}
+
+function createStage5EliteKinds(): EnemyKind[] {
+  const bladeCount = Math.random() < 0.5 ? 2 : 3;
+  const shuffledSlots = [0, 1, 2, 3, 4, 5];
+  for (let index = shuffledSlots.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffledSlots[index], shuffledSlots[swapIndex]] = [
+      shuffledSlots[swapIndex],
+      shuffledSlots[index],
+    ];
+  }
+  const bladeSlots = new Set(shuffledSlots.slice(0, bladeCount));
+  const alternatingKinds: EnemyKind[] =
+    Math.random() < 0.5
+      ? ["executioner", "sixarm"]
+      : ["sixarm", "executioner"];
+  let alternatingIndex = 0;
+  return shuffledSlots.map((_, slot) => {
+    if (bladeSlots.has(slot)) return "blade";
+    const kind = alternatingKinds[alternatingIndex % alternatingKinds.length];
+    alternatingIndex += 1;
+    return kind;
+  });
+}
+
+function isEnemyDeathComplete(entity: Entity) {
+  if (entity.deadClock === undefined) return false;
+  if (entity.kind === "blade") {
+    return (
+      entity.deadClock >= BLADE_DEATH_REMOVE_AFTER &&
+      Boolean(entity.deathFinalFrameDrawn)
+    );
+  }
+  return entity.deadClock >= (entity.kind === "zeus" ? 7.5 : 1.9);
 }
 
 function loadSave(): SaveData {
@@ -260,11 +325,28 @@ function loadSave(): SaveData {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SAVE;
     const parsed = JSON.parse(raw);
-    const clearedStages = Array.isArray(parsed.clearedStages)
-      ? parsed.clearedStages.filter((stage: unknown) => stage === 1 || stage === 2 || stage === 3 || stage === 4)
-      : Number(parsed.unlockedStage) >= 2
-        ? [1]
-        : [];
+    const isVersion2 = parsed.version === 2;
+    const legacyUnlockedStage = clamp(Number(parsed.unlockedStage) || 1, 1, 4);
+    const rawClearedStages = Array.isArray(parsed.clearedStages)
+      ? parsed.clearedStages.filter(
+          (stage: unknown): stage is number =>
+            typeof stage === "number" &&
+            Number.isInteger(stage) &&
+            stage >= 1 &&
+            stage <= (isVersion2 ? 5 : 4),
+        )
+      : Array.from(
+          { length: Math.max(0, legacyUnlockedStage - 1) },
+          (_, index) => index + 1,
+        );
+    const clearedStages = isVersion2
+      ? [...new Set(rawClearedStages)]
+      : [
+          ...new Set([
+            ...rawClearedStages.filter((stage) => stage <= 3),
+            ...(rawClearedStages.includes(4) ? [5] : []),
+          ]),
+        ];
     const seenHeroUnlocks = (
       Array.isArray(parsed.seenHeroUnlocks)
         ? parsed.seenHeroUnlocks
@@ -279,31 +361,61 @@ function loadSave(): SaveData {
             )
         : []
     );
-    if (clearedStages.includes(1) && !seenHeroUnlocks.includes("鬼山 タケシ")) {
+    const shouldPreserveOniyama = isVersion2
+      ? clearedStages.includes(2)
+      : rawClearedStages.includes(1);
+    const shouldPreserveHyperman = isVersion2
+      ? clearedStages.includes(3)
+      : rawClearedStages.includes(2);
+    if (shouldPreserveOniyama && !seenHeroUnlocks.includes("鬼山 タケシ")) {
       seenHeroUnlocks.push("鬼山 タケシ");
     }
-    if (clearedStages.includes(2) && !seenHeroUnlocks.includes("HYPERMAN")) {
+    if (shouldPreserveHyperman && !seenHeroUnlocks.includes("HYPERMAN")) {
       seenHeroUnlocks.push("HYPERMAN");
     }
+    const muUnlocked = Boolean(parsed.muUnlocked);
+    const parsedMuOfferStep: MuOfferStep =
+      parsed.muOfferStep === "eligible" ||
+      parsed.muOfferStep === "offer" ||
+      parsed.muOfferStep === "purchase" ||
+      parsed.muOfferStep === "unlocked"
+        ? parsed.muOfferStep
+        : "none";
+    const muOfferPending =
+      !muUnlocked &&
+      Boolean(
+        parsed.muOfferPending ||
+          (!isVersion2 && parsed.muFirstStage4Loss) ||
+          parsedMuOfferStep === "eligible" ||
+          parsedMuOfferStep === "offer" ||
+          parsedMuOfferStep === "purchase",
+      );
+    const unlockedStage = isVersion2
+      ? clamp(
+          Math.max(
+            Number(parsed.unlockedStage) || 1,
+            ...clearedStages.map((stage) => Math.min(5, stage + 1)),
+          ),
+          1,
+          5,
+        )
+      : legacyUnlockedStage >= 4 || rawClearedStages.includes(4)
+        ? 5
+        : legacyUnlockedStage;
     return {
-      unlockedStage: clamp(
-        Math.max(Number(parsed.unlockedStage) || 1, clearedStages.includes(3) ? 4 : 1),
-        1,
-        4,
-      ),
+      version: 2,
+      unlockedStage,
       clearedStages,
       seenHeroUnlocks,
       materials: Math.max(0, Number(parsed.materials) || 0),
       bankCoins: Math.max(0, Number(parsed.bankCoins) || 0),
-      muUnlocked: Boolean(parsed.muUnlocked),
-      muFirstStage4Loss: Boolean(parsed.muFirstStage4Loss),
-      muOfferStep:
-        parsed.muOfferStep === "eligible" ||
-        parsed.muOfferStep === "offer" ||
-        parsed.muOfferStep === "purchase" ||
-        parsed.muOfferStep === "unlocked"
-          ? parsed.muOfferStep
-          : "none",
+      muUnlocked,
+      muOfferPending,
+      muOfferStep: muUnlocked
+        ? "none"
+        : muOfferPending && parsedMuOfferStep === "none"
+          ? "eligible"
+          : parsedMuOfferStep,
       upgrades: {
         attack: clamp(Number(parsed.upgrades?.attack) || 0, 0, 5),
         coins: clamp(Number(parsed.upgrades?.coins) || 0, 0, 5),
@@ -354,6 +466,7 @@ export default function Home() {
     explosions: [] as Explosion[],
     shockwaves: [] as Shockwave[],
     lightnings: [] as LightningStrike[],
+    groundSpikes: [] as GroundSpike[],
     timeLeft: DURATION,
     coins: 100,
     bankCoinsEarned: 0,
@@ -366,7 +479,9 @@ export default function Home() {
     running: false,
     finishing: false,
     bossSpawned: false,
-    stage4EliteWaveIndex: 0,
+    bossDeathComplete: false,
+    stage5EliteWaveIndex: 0,
+    stage5EliteKinds: [] as EnemyKind[],
   });
   const imagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
@@ -374,10 +489,12 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       const loaded = loadSave();
       const restored =
-        loaded.muOfferStep === "eligible"
+        loaded.muOfferPending &&
+        !loaded.muUnlocked &&
+        (loaded.muOfferStep === "eligible" || loaded.muOfferStep === "none")
           ? { ...loaded, muOfferStep: "offer" as MuOfferStep }
           : loaded;
-      if (restored !== loaded) localStorage.setItem(STORAGE_KEY, JSON.stringify(restored));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(restored));
       setSave(restored);
       setMuOfferStep(restored.muOfferStep);
     }, 0);
@@ -424,12 +541,16 @@ export default function Home() {
   const startBattle = useCallback(
     (which: number) => {
       const maxBase = Math.round(2000 * (1 + save.upgrades.base * 0.15));
-      const startingCoins = 100 + save.upgrades.initialCoins * 100;
+      const startingCoins = Math.min(
+        MAX_BATTLE_COINS,
+        100 + save.upgrades.initialCoins * 100,
+      );
       stateRef.current = {
         entities: [],
         explosions: [],
         shockwaves: [],
         lightnings: [],
+        groundSpikes: [],
         timeLeft: DURATION,
         coins: startingCoins,
         bankCoinsEarned: 0,
@@ -442,7 +563,9 @@ export default function Home() {
         running: true,
         finishing: false,
         bossSpawned: false,
-        stage4EliteWaveIndex: 0,
+        bossDeathComplete: false,
+        stage5EliteWaveIndex: 0,
+        stage5EliteKinds: which === 5 ? createStage5EliteKinds() : [],
       };
       setStage(which);
       setOverlay("none");
@@ -552,13 +675,13 @@ export default function Home() {
     }
   }, [battleEntryFade]);
 
-  const addEnemy = useCallback((kind: EnemyKind) => {
+  const addEnemy = useCallback((kind: EnemyKind, isBoss = false) => {
     const s = stateRef.current;
-    const stage = clamp(s.stage, 1, 4) as 1 | 2 | 3 | 4;
+    const stage = clamp(s.stage, 1, 5) as 1 | 2 | 3 | 4 | 5;
     const standardStats =
       kind === "office" || kind === "fat" ? STANDARD_ENEMY_STATS[stage][kind] : null;
     const eliteStats =
-      kind === "executioner" || kind === "sixarm" || kind === "zeus"
+      kind === "executioner" || kind === "sixarm" || kind === "zeus" || kind === "blade"
         ? ELITE_ENEMY_STATS[kind]
         : null;
     const hp = standardStats?.hp ?? eliteStats?.hp ?? 1;
@@ -581,6 +704,7 @@ export default function Home() {
       anim: "walk",
       animClock: Math.random(),
       hitFlash: 0,
+      isBoss,
     });
   }, []);
 
@@ -589,7 +713,16 @@ export default function Home() {
       if (screen !== "battle" || overlay !== "none") return;
       const s = stateRef.current;
       const cfg = UNITS[kind];
-      if (!isUnitUnlocked(kind, save.clearedStages, save.muUnlocked)) return;
+      if (
+        !isUnitUnlocked(
+          kind,
+          save.clearedStages,
+          save.muUnlocked,
+          save.seenHeroUnlocks,
+        )
+      ) {
+        return;
+      }
       const livingAllies = s.entities.filter((e) => e.team === "ally" && e.hp > 0).length;
       if (s.coins < cfg.cost || s.cooldowns[kind] > 0 || !s.running || livingAllies >= MAX_ALLIES) return;
       const hp = cfg.hp;
@@ -617,7 +750,15 @@ export default function Home() {
       });
       syncHud();
     },
-    [overlay, save.clearedStages, save.muUnlocked, save.upgrades.attack, screen, syncHud],
+    [
+      overlay,
+      save.clearedStages,
+      save.muUnlocked,
+      save.seenHeroUnlocks,
+      save.upgrades.attack,
+      screen,
+      syncHud,
+    ],
   );
 
   const finishClear = useCallback(() => {
@@ -625,9 +766,18 @@ export default function Home() {
     if (s.finishing) return;
     s.finishing = true;
     s.running = false;
-    const earned = s.stage === 1 ? 100 : s.stage === 2 ? 180 : s.stage === 3 ? 300 : 500;
+    const earned =
+      s.stage === 1
+        ? 100
+        : s.stage === 2
+          ? 180
+          : s.stage === 3
+            ? 300
+            : s.stage === 4
+              ? 400
+              : 500;
     const heroName: HeroUnlockName | null =
-      s.stage === 1 ? "鬼山 タケシ" : s.stage === 2 ? "HYPERMAN" : null;
+      s.stage === 2 ? "鬼山 タケシ" : s.stage === 3 ? "HYPERMAN" : null;
     const hero = heroName && !save.seenHeroUnlocks.includes(heroName) ? heroName : null;
     setReward(earned);
     setUnlockedHero(hero);
@@ -635,7 +785,7 @@ export default function Home() {
       ...save,
       materials: save.materials + earned,
       bankCoins: save.bankCoins + s.bankCoinsEarned,
-      unlockedStage: Math.max(save.unlockedStage, Math.min(4, s.stage + 1)),
+      unlockedStage: Math.max(save.unlockedStage, Math.min(5, s.stage + 1)),
       seenHeroUnlocks: hero ? [...save.seenHeroUnlocks, hero] : save.seenHeroUnlocks,
       clearedStages: save.clearedStages.includes(s.stage)
         ? save.clearedStages
@@ -648,10 +798,10 @@ export default function Home() {
   const finishGameOver = useCallback(() => {
     const s = stateRef.current;
     s.running = false;
-    if (s.stage === 4 && !save.muFirstStage4Loss) {
+    if (s.stage === 5 && !save.muUnlocked && !save.muOfferPending) {
       persist({
         ...save,
-        muFirstStage4Loss: true,
+        muOfferPending: true,
         muOfferStep: "eligible",
       });
     }
@@ -673,7 +823,10 @@ export default function Home() {
         s.passiveClock += dt;
         hudClock += dt;
         if (s.passiveClock >= 1) {
-          s.coins += Math.floor(s.passiveClock);
+          s.coins = Math.min(
+            MAX_BATTLE_COINS,
+            s.coins + Math.floor(s.passiveClock),
+          );
           s.passiveClock %= 1;
         }
         (Object.keys(s.cooldowns) as UnitKind[]).forEach(
@@ -681,31 +834,46 @@ export default function Home() {
         );
 
         const elapsed = DURATION - s.timeLeft;
-        if (!s.bossSpawned && s.timeLeft <= 30 && s.timeLeft > 0 && s.stage >= 2) {
-          addEnemy(s.stage === 2 ? "executioner" : s.stage === 3 ? "sixarm" : "zeus");
+        const bossKind: EnemyKind | null =
+          s.stage === 2
+            ? "executioner"
+            : s.stage === 3
+              ? "sixarm"
+              : s.stage === 4
+                ? "blade"
+                : s.stage === 5
+                  ? "zeus"
+                  : null;
+        if (
+          bossKind &&
+          !s.bossSpawned &&
+          s.timeLeft <= 30 &&
+          s.timeLeft > 0
+        ) {
+          addEnemy(bossKind, true);
           s.bossSpawned = true;
         }
-        if (s.stage === 4) {
-          const eliteSchedule: { at: number; kind: EnemyKind }[] = [
-            { at: 90, kind: "executioner" },
-            { at: 82, kind: "sixarm" },
-            { at: 74, kind: "executioner" },
-            { at: 66, kind: "sixarm" },
-            { at: 58, kind: "executioner" },
-            { at: 50, kind: "sixarm" },
-          ];
-          const nextElite = eliteSchedule[s.stage4EliteWaveIndex];
-          if (nextElite && s.timeLeft <= nextElite.at) {
-            addEnemy(nextElite.kind);
-            s.stage4EliteWaveIndex += 1;
+        if (s.stage === 5) {
+          const eliteTimes = [90, 82, 74, 66, 58, 50];
+          const eliteIndex = s.stage5EliteWaveIndex;
+          const eliteKind = s.stage5EliteKinds[eliteIndex];
+          if (
+            eliteKind &&
+            s.timeLeft <= eliteTimes[eliteIndex] &&
+            s.timeLeft > 0
+          ) {
+            addEnemy(eliteKind);
+            s.stage5EliteWaveIndex += 1;
           }
         }
         s.spawnClock -= dt;
-        const normalMobSpawnsStopped = s.stage === 4 && s.bossSpawned;
+        const normalMobSpawnsStopped =
+          s.stage >= 2 && s.stage <= 5 && s.bossSpawned;
         if (s.spawnClock <= 0 && s.timeLeft > 0 && !normalMobSpawnsStopped) {
-          const fatChance =
-            s.stage === 1 ? (elapsed > 120 ? 0.22 : 0) : elapsed > 40 ? 0.3 : 0.1;
-          addEnemy(Math.random() < fatChance ? "fat" : "office");
+          const fatChance = s.stage === 1 ? 0 : elapsed > 40 ? 0.3 : 0.1;
+          addEnemy(
+            s.stage === 1 || Math.random() >= fatChance ? "office" : "fat",
+          );
           const baseGap =
             s.stage === 1
               ? elapsed < 60
@@ -740,6 +908,8 @@ export default function Home() {
             const hitTimes =
               e.kind === "zeus"
                 ? [0.58]
+                : e.kind === "blade"
+                  ? [BLADE_ATTACK_HIT_TIME]
                 :
               e.kind === "rifleman"
                 ? [1 / 7, 2 / 7, 3 / 7, 4 / 7]
@@ -777,7 +947,10 @@ export default function Home() {
                     maxAge: 0.52,
                     radius: ZEUS_LIGHTNING_RADIUS,
                   });
-                  s.baseHp -= ZEUS_BASE_DAMAGE;
+                  s.baseHp = Math.max(0, s.baseHp - ZEUS_BASE_DAMAGE);
+                } else if (e.kind === "blade") {
+                  s.groundSpikes.push(createGroundSpike(BASE_ATTACK_X));
+                  s.baseHp -= BLADE_CONFIG.baseDamage;
                 } else {
                   s.baseHp -= e.damage;
                 }
@@ -802,6 +975,15 @@ export default function Home() {
                       victim.hitFlash = 0.18;
                     }
                   });
+              } else if (e.kind === "blade") {
+                const strikeX = target?.x ?? e.attackTargetX;
+                if (strikeX !== undefined && Number.isFinite(strikeX)) {
+                  s.groundSpikes.push(createGroundSpike(strikeX));
+                  getBladeAreaVictims(s.entities, strikeX).forEach((victim) => {
+                    victim.hp -= e.damage;
+                    victim.hitFlash = 0.12;
+                  });
+                }
               } else if (e.kind === "hyperman") {
                 const victims = s.entities.filter(
                   (candidate) =>
@@ -852,6 +1034,7 @@ export default function Home() {
             if (e.attackElapsed >= attackDuration) {
               e.attackElapsed = undefined;
               e.attackTargetId = undefined;
+              e.attackTargetX = undefined;
               e.appliedHits = 0;
               e.anim = "idle";
               e.animClock = 0;
@@ -886,6 +1069,7 @@ export default function Home() {
                 e.attackClock = e.interval;
                 e.attackElapsed = 0;
                 e.attackTargetId = target.id;
+                e.attackTargetX = e.kind === "blade" ? target.x : undefined;
                 e.appliedHits = 0;
                 e.anim = "attack";
                 e.animClock = 0;
@@ -958,6 +1142,7 @@ export default function Home() {
                 e.attackClock = e.interval;
                 e.attackElapsed = 0;
                 e.attackTargetId = target.id;
+                e.attackTargetX = e.kind === "blade" ? target.x : undefined;
                 e.appliedHits = 0;
                 e.anim = "attack";
                 e.animClock = 0;
@@ -971,12 +1156,15 @@ export default function Home() {
               !target &&
               (e.kind === "zeus"
                 ? !hasLivingAllies && Math.abs(e.x - BASE_ATTACK_X) <= e.range
+                : e.kind === "blade"
+                  ? !hasLivingAllies && Math.abs(e.x - BASE_ATTACK_X) <= e.range
                 : e.x <= BASE_ATTACK_X)
             ) {
               if (e.attackClock <= 0) {
                 e.attackClock = e.interval;
                 e.attackElapsed = 0;
                 e.attackTargetId = -1;
+                e.attackTargetX = e.kind === "blade" ? BASE_ATTACK_X : undefined;
                 e.appliedHits = 0;
                 e.anim = "attack";
                 e.animClock = 0;
@@ -996,29 +1184,44 @@ export default function Home() {
             e.anim = "death";
             e.animClock = 0;
             e.deadClock = 0;
+            e.deathFinalFrameDrawn = false;
             if (e.team === "enemy") {
-              const raw = e.kind === "zeus" ? 1000 : e.kind === "executioner" ? 180 : e.kind === "sixarm" ? 260 : e.kind === "fat" ? 40 : 15;
+              const raw = e.kind === "blade" ? BLADE_CONFIG.killCoins : e.kind === "zeus" ? 1000 : e.kind === "executioner" ? 180 : e.kind === "sixarm" ? 260 : e.kind === "fat" ? 40 : 15;
               const gained = Math.round(raw * (1 + save.upgrades.coins * 0.1));
-              s.coins += gained;
+              s.coins = Math.min(MAX_BATTLE_COINS, s.coins + gained);
               s.bankCoinsEarned += gained;
             }
           }
           if (e.anim === "death") {
             e.deadClock = (e.deadClock || 0) + dt;
             e.animClock = e.deadClock;
+            if (e.isBoss && isEnemyDeathComplete(e)) {
+              s.bossDeathComplete = true;
+            }
           }
         });
         s.entities = s.entities.filter(
-          (e) => e.deadClock === undefined || e.deadClock < (e.kind === "zeus" ? 7.5 : 1.9),
+          (e) =>
+            e.deadClock === undefined ||
+            !isEnemyDeathComplete(e),
         );
         if (s.timeLeft <= 0) {
           s.timeLeft = 0;
-          const livingEnemies = s.entities.some((e) => e.team === "enemy" && e.hp > 0);
-          const enemyDeathAnimation = s.entities.some(
-            (e) => e.team === "enemy" && e.deadClock !== undefined,
-          );
-          if (!livingEnemies && !enemyDeathAnimation) finishClear();
         }
+        const livingEnemies = s.entities.some(
+          (e) => e.team === "enemy" && e.hp > 0,
+        );
+        const enemyDeathAnimation = s.entities.some(
+          (e) => e.team === "enemy" && e.deadClock !== undefined,
+        );
+        const noEnemiesRemain = !livingEnemies && !enemyDeathAnimation;
+        const stageCanClear =
+          s.stage === 1
+            ? s.timeLeft <= 0
+            : s.stage === 5
+              ? s.timeLeft <= 0 && s.bossDeathComplete
+              : s.bossDeathComplete;
+        if (stageCanClear && noEnemiesRemain) finishClear();
         if (s.baseHp <= 0) {
           s.baseHp = 0;
           finishGameOver();
@@ -1035,6 +1238,8 @@ export default function Home() {
       s.shockwaves = s.shockwaves.filter((x) => x.age < x.maxAge);
       s.lightnings.forEach((x) => (x.age += dt));
       s.lightnings = s.lightnings.filter((x) => x.age < x.maxAge);
+      s.groundSpikes.forEach((x) => (x.age += dt));
+      s.groundSpikes = s.groundSpikes.filter((x) => x.age < x.maxAge);
       drawGame(canvasRef.current, s, image);
       raf = requestAnimationFrame(loop);
     };
@@ -1063,7 +1268,12 @@ export default function Home() {
 
   const returnMenuFromGameOver = () => {
     stateRef.current.running = false;
-    if (stage === 4 && save.muOfferStep === "eligible") {
+    if (
+      stage === 5 &&
+      save.muOfferPending &&
+      !save.muUnlocked &&
+      (save.muOfferStep === "eligible" || save.muOfferStep === "none")
+    ) {
       const next = { ...save, muOfferStep: "offer" as MuOfferStep };
       persist(next);
       setMuOfferStep("offer");
@@ -1073,9 +1283,6 @@ export default function Home() {
   };
 
   const retryAfterGameOver = () => {
-    if (save.muOfferStep === "eligible") {
-      persist({ ...save, muOfferStep: "none" });
-    }
     startBattle(stage);
   };
 
@@ -1083,6 +1290,7 @@ export default function Home() {
     const next = {
       ...save,
       muUnlocked: step === "unlocked" ? true : save.muUnlocked,
+      muOfferPending: step === "unlocked" ? false : save.muOfferPending,
       muOfferStep: step,
     };
     persist(next);
@@ -1182,14 +1390,20 @@ export default function Home() {
                 locked={save.unlockedStage < 4}
                 onSelect={() => startBattleWithLoading(4)}
               />
+              <StageCard
+                stage={5}
+                cleared={save.clearedStages.includes(5)}
+                locked={save.unlockedStage < 5}
+                onSelect={() => startBattleWithLoading(5)}
+              />
             </div>
           </SubScreen>
         )}
 
         {screen === "upgrades" && (
-          <SubScreen title="部隊強化" kicker="SQUAD UPGRADE" materials={save.materials} coins={save.bankCoins} onBack={() => setScreen("menu")}>
+          <SubScreen title="部隊強化" kicker="SQUAD UPGRADE" materials={save.materials} onBack={() => setScreen("menu")}>
             <UpgradeCard icon="⚔" title="攻撃力強化" detail="全味方の攻撃力 +10%" level={save.upgrades.attack} materials={save.materials} onBuy={() => buyUpgrade("attack")} />
-            <UpgradeCard icon="🪙" title="キルコインUP" detail="敵撃破時の戦闘コイン +10%" level={save.upgrades.coins} materials={save.materials} onBuy={() => buyUpgrade("coins")} />
+            <UpgradeCard icon="＋" title="キルコインUP" detail="敵撃破時の戦闘コイン +10%" level={save.upgrades.coins} materials={save.materials} onBuy={() => buyUpgrade("coins")} />
             <UpgradeCard icon="⌂" title="拠点耐久強化" detail="拠点最大HP +15%" level={save.upgrades.base} materials={save.materials} onBuy={() => buyUpgrade("base")} />
             <UpgradeCard
               icon="◉"
@@ -1256,6 +1470,7 @@ export default function Home() {
                     kind,
                     save.clearedStages,
                     save.muUnlocked,
+                    save.seenHeroUnlocks,
                   );
                   const disabled = locked || coins < cfg.cost || cd > 0 || overlay !== "none" || atMax;
                   return (
@@ -1291,7 +1506,19 @@ export default function Home() {
                 {overlay === "clear" && (
                   <Modal kicker="MISSION COMPLETE" title="Congratulations!">
                     <div className="reward-line">🔩 強化資材 <strong>+{reward}</strong></div>
-                    {stage < 4 && <button className="modal-primary" onClick={() => startBattle(stage + 1)}>次のステージ</button>}
+                    {stage < 5 && (
+                      <button
+                        className="modal-primary"
+                        onClick={(event) => {
+                          event.currentTarget.disabled = true;
+                          stateRef.current.running = false;
+                          setOverlay("none");
+                          startBattleWithLoading(stage + 1);
+                        }}
+                      >
+                        次のステージ
+                      </button>
+                    )}
                     <button onClick={() => startBattle(stage)}>再プレイ</button>
                     <button onClick={returnMenu}>メニューに戻る</button>
                   </Modal>
@@ -1376,14 +1603,12 @@ function SubScreen({
   title,
   kicker,
   materials,
-  coins,
   onBack,
   children,
 }: {
   title: string;
   kicker: string;
   materials?: number;
-  coins?: number;
   onBack: () => void;
   children: React.ReactNode;
 }) {
@@ -1395,7 +1620,6 @@ function SubScreen({
         {materials !== undefined ? (
           <span className="resource-balance">
             <b>🔩 {materials}</b>
-            {coins !== undefined && <b>🪙 {coins.toLocaleString()}</b>}
           </span>
         ) : <i />}
       </header>
@@ -1439,7 +1663,7 @@ function StageCard({
   locked,
   onSelect,
 }: {
-  stage: 1 | 2 | 3 | 4;
+  stage: 1 | 2 | 3 | 4 | 5;
   cleared: boolean;
   locked: boolean;
   onSelect: () => void;
@@ -1455,12 +1679,15 @@ function StageCard({
       <span className="stage-card-bg" />
       <span className="stage-card-number"><small>STAGE</small>{String(stage).padStart(2, "0")}</span>
       <span className={`stage-enemies stage-enemies-${stage}`}>
-        {stage < 4 && <img src="/game/sprites/office/idle/00.png" alt="" />}
-        {stage === 2 && <img src="/game/sprites/fat/idle/00.png" alt="" />}
-        {stage === 3 && <img src="/game/sprites/fat/idle/00.png" alt="" />}
-        {stage === 4 && <img src="/game/sprites/zeus/idle/00.png" alt="" />}
+        {stage <= 4 && <img src="/game/sprites/office/idle/00.png" alt="" />}
+        {(stage === 2 || stage === 3 || stage === 4) && (
+          <img src="/game/sprites/fat/idle/00.png" alt="" />
+        )}
+        {stage === 5 && <img src="/game/sprites/zeus/idle/00.png" alt="" />}
       </span>
       <span className="stage-card-info">
+        {stage === 4 && <strong>通常軍を突破しBladeを討て</strong>}
+        {stage === 5 && <strong>最終決戦・ゼウスゾンビ</strong>}
         <em>{cleared ? "✓ クリア済み" : locked ? "未解放" : "未クリア"}</em>
       </span>
       {locked && <span className="stage-lock" aria-hidden="true">🔒</span>}
@@ -1490,6 +1717,7 @@ function drawGame(
     explosions: Explosion[];
     shockwaves: Shockwave[];
     lightnings: LightningStrike[];
+    groundSpikes: GroundSpike[];
     baseHp: number;
     stage: number;
   },
@@ -1524,10 +1752,10 @@ function drawGame(
   if (s.stage === 2) {
     ctx.fillStyle = "rgba(118, 42, 22, .15)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  } else if (s.stage === 3) {
+  } else if (s.stage === 3 || s.stage === 4) {
     ctx.fillStyle = "rgba(42, 30, 92, .18)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  } else if (s.stage === 4) {
+  } else if (s.stage === 5) {
     ctx.fillStyle = "rgba(74, 46, 12, .22)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
   }
@@ -1552,6 +1780,8 @@ function drawGame(
         ? 184
         : e.kind === "zeus"
           ? 244
+        : e.kind === "blade"
+          ? BLADE_CONFIG.displaySize
         : e.kind === "executioner"
           ? 170
           : e.kind === "fat"
@@ -1604,10 +1834,17 @@ function drawGame(
         ctx.shadowBlur = 18 + Math.min(52, t * 8);
       }
       ctx.drawImage(im, x, y, size, size);
+      if (
+        e.kind === "blade" &&
+        e.anim === "death" &&
+        frame === BLADE_CONFIG.frames.death - 1
+      ) {
+        e.deathFinalFrameDrawn = true;
+      }
       ctx.restore();
     }
     if (e.anim !== "death") {
-      const hpW = e.kind === "zeus" ? 126 : e.kind === "executioner" || e.kind === "sixarm" ? 88 : e.kind === "fat" ? 55 : 44;
+      const hpW = e.kind === "zeus" ? 126 : e.kind === "blade" ? BLADE_CONFIG.hpBarWidth : e.kind === "executioner" || e.kind === "sixarm" ? 88 : e.kind === "fat" ? 55 : 44;
       const hpY = e.kind === "oniyama" ? BATTLE_FLOOR - 108 : y + 5;
       ctx.fillStyle = "rgba(0,0,0,.72)";
       ctx.fillRect(e.x - hpW / 2 - 1, hpY, hpW + 2, 6);
@@ -1621,6 +1858,8 @@ function drawGame(
       }
     }
   });
+
+  drawGroundSpikes(ctx, s.groundSpikes);
 
   if (dyingZeus) {
     const t = dyingZeus.deadClock || 0;
@@ -1794,4 +2033,77 @@ function drawGame(
     ctx.fillStyle = `rgba(255,249,214,${Math.max(0, flash) * .82})`;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
   }
+}
+
+function drawGroundSpikes(
+  ctx: CanvasRenderingContext2D,
+  groundSpikes: GroundSpike[],
+) {
+  const shapes = [
+    { x: -78, halfWidth: 11, height: 55, lean: -8 },
+    { x: -58, halfWidth: 14, height: 82, lean: -5 },
+    { x: -34, halfWidth: 16, height: 96, lean: 4 },
+    { x: -8, halfWidth: 18, height: 76, lean: -4 },
+    { x: 18, halfWidth: 17, height: 100, lean: 5 },
+    { x: 46, halfWidth: 15, height: 86, lean: 7 },
+    { x: 72, halfWidth: 12, height: 61, lean: 9 },
+  ];
+
+  groundSpikes.forEach((spike) => {
+    const { heightScale, opacity } = getGroundSpikeVisual(
+      spike.age,
+      spike.maxAge,
+    );
+    if (opacity <= 0 || heightScale <= 0) return;
+    const widthScale = spike.radius / BLADE_CONFIG.aoeRadius;
+
+    ctx.save();
+    ctx.translate(spike.x, BATTLE_FLOOR);
+    ctx.scale(widthScale, heightScale);
+    ctx.globalAlpha = opacity;
+
+    ctx.fillStyle = "rgba(34, 19, 10, .58)";
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 90, 13, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    shapes.forEach((shape, index) => {
+      const gradient = ctx.createLinearGradient(
+        shape.x - shape.halfWidth,
+        0,
+        shape.x + shape.halfWidth,
+        -shape.height,
+      );
+      gradient.addColorStop(0, index % 2 === 0 ? "#3b2415" : "#51301a");
+      gradient.addColorStop(0.48, index % 2 === 0 ? "#7a4a25" : "#68401f");
+      gradient.addColorStop(1, "#21140d");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.moveTo(shape.x - shape.halfWidth, 0);
+      ctx.lineTo(shape.x + shape.lean, -shape.height);
+      ctx.lineTo(shape.x + shape.halfWidth, 0);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(24, 13, 8, .52)";
+      ctx.beginPath();
+      ctx.moveTo(shape.x + shape.lean, -shape.height);
+      ctx.lineTo(shape.x + shape.halfWidth, 0);
+      ctx.lineTo(shape.x + 1, 0);
+      ctx.closePath();
+      ctx.fill();
+    });
+
+    ctx.strokeStyle = "rgba(27, 15, 9, .78)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-90, 0);
+    ctx.lineTo(-47, -7);
+    ctx.lineTo(-17, -2);
+    ctx.lineTo(19, -8);
+    ctx.lineTo(52, -3);
+    ctx.lineTo(90, 0);
+    ctx.stroke();
+    ctx.restore();
+  });
 }
