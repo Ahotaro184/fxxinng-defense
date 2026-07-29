@@ -100,7 +100,7 @@ const ELITE_ENEMY_STATS: Record<
   { hp: number; damage: number; speed: number; range: number; interval: number }
 > = {
   executioner: { hp: 1800, damage: 100, speed: 5.2, range: 68, interval: 1.75 },
-  sixarm: { hp: 3000, damage: 125, speed: 6, range: 74, interval: 1.45 },
+  sixarm: { hp: 3900, damage: 125, speed: 6, range: 74, interval: 1.45 },
   zeus: { hp: 100_000, damage: 9999, speed: 6, range: 220, interval: 5 },
   blade: {
     hp: BLADE_CONFIG.hp,
@@ -110,7 +110,7 @@ const ELITE_ENEMY_STATS: Record<
     interval: BLADE_CONFIG.interval,
   },
 };
-const STAGE_3_SIXARM_STATS = { hp: 2700, damage: 113 } as const;
+const STAGE_3_SIXARM_STATS = { hp: 3900, damage: 113 } as const;
 
 const HERO_PATROL_LIMIT_RATIO: Record<UnitKind, number> = {
   gunslinger: 0.6,
@@ -191,8 +191,8 @@ const UNITS: Record<
   rifleman: {
     label: "諸星 虎太郎",
     subtitle: "4連射→休憩",
-    cost: 120,
-    cooldown: 10,
+    cost: 100,
+    cooldown: 20,
     hp: 220,
     damage: 18,
     speed: 11,
@@ -204,7 +204,7 @@ const UNITS: Record<
     label: "鬼山 タケシ",
     subtitle: "長刀・返し二連斬り",
     cost: 150,
-    cooldown: 12,
+    cooldown: 30,
     hp: 700,
     damage: ONIYAMA_FIRST_HIT_DAMAGE,
     speed: 10.5,
@@ -216,7 +216,7 @@ const UNITS: Record<
     label: "HYPERMAN",
     subtitle: "前方まとめて555",
     cost: 300,
-    cooldown: 30,
+    cooldown: 60,
     hp: 9999,
     damage: 555,
     speed: 12,
@@ -1373,7 +1373,7 @@ export default function Home() {
           <section className="menu-screen">
             <div className="menu-shade" />
             <div className="title-block">
-              <div className="title-kicker">A VERY SERIOUS DEFENSE GAME</div>
+              <div className="title-kicker">理不尽なゾンビ軍団を迎え撃つ超シリアスで真面目なクソゲー</div>
               <h1>Fxxinng<br /><span>DEFENSE</span></h1>
             </div>
             <div className="material-chip">🔩 強化資材 <strong>{save.materials}</strong></div>

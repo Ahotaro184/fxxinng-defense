@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Fxxinng Defense",
-  description: "理不尽なゾンビ軍団を迎え撃つ、非常に真面目な防衛ゲーム。",
+  description: "理不尽なゾンビ軍団を迎え撃つ超シリアスで真面目なクソゲー",
   other: {
     "codex-preview": "development",
   },
