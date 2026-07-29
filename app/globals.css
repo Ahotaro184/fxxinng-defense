@@ -117,8 +117,7 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 }
 
 .title-block { position: relative; padding: 9vh 7% 0; text-shadow: 0 4px 0 #0a0b0c, 0 8px 18px #000; }
-.title-kicker { color: var(--yellow); font-size: clamp(8px, 2.2vw, 13px); letter-spacing: .26em; font-weight: 900; }
-.title-block h1 { margin: 7px 0 0; font-size: clamp(48px, 14vw, 86px); line-height: .78; letter-spacing: -.055em; font-style: italic; text-transform: uppercase; }
+.title-block h1 { margin: 0; font-size: clamp(48px, 14vw, 86px); line-height: .78; letter-spacing: -.055em; font-style: italic; text-transform: uppercase; }
 .title-block h1 span { color: var(--yellow); -webkit-text-stroke: 1px #7d4a00; }
 .title-block p { margin: 13px 0; font-family: system-ui; font-size: clamp(10px, 2.6vw, 15px); opacity: .75; }
 

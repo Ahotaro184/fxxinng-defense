@@ -12,9 +12,22 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const SHARE_TITLE = "Fxxinng Defense";
+const SHARE_DESCRIPTION = "理不尽なゾンビ軍団を迎え撃つ超シリアスで真面目なクソゲー。";
+
 export const metadata: Metadata = {
-  title: "Fxxinng Defense",
-  description: "理不尽なゾンビ軍団を迎え撃つ超シリアスで真面目なクソゲー",
+  title: SHARE_TITLE,
+  description: SHARE_DESCRIPTION,
+  openGraph: {
+    title: SHARE_TITLE,
+    description: SHARE_DESCRIPTION,
+    type: "website",
+  },
+  twitter: {
+    title: SHARE_TITLE,
+    description: SHARE_DESCRIPTION,
+    card: "summary",
+  },
   other: {
     "codex-preview": "development",
   },

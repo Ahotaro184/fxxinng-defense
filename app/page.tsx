@@ -81,6 +81,8 @@ const ZEUS_LIGHTNING_RADIUS = 72;
 const DURATION = 180;
 const MAX_ALLIES = 50;
 const MAX_BATTLE_COINS = 999;
+const NORMAL_ZOMBIE_SPEED = 12.75;
+const FAT_ZOMBIE_SPEED = 6.8;
 const STORAGE_KEY = "fxxinng-turret-save-v1";
 const UPGRADE_COSTS = [100, 200, 400, 800, 1600];
 
@@ -135,6 +137,7 @@ const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
 };
 const MU_BATTLE_SPRITE_SIZE = 54;
 const MU_WALK_FRAME_SEQUENCE = [0, 2, 3, 4, 5, 4] as const;
+const HYPERMAN_RENDER_Y_OFFSET = -34;
 
 const DEFAULT_SAVE: SaveData = {
   version: 2,
@@ -695,7 +698,12 @@ export default function Home() {
     const hp = stageThreeSixarmStats?.hp ?? standardStats?.hp ?? eliteStats?.hp ?? 1;
     const damage =
       stageThreeSixarmStats?.damage ?? standardStats?.damage ?? eliteStats?.damage ?? 1;
-    const speed = kind === "fat" ? 8 : kind === "office" ? 15 : eliteStats?.speed ?? 15;
+    const speed =
+      kind === "fat"
+        ? FAT_ZOMBIE_SPEED
+        : kind === "office"
+          ? NORMAL_ZOMBIE_SPEED
+          : eliteStats?.speed ?? 15;
     const range = kind === "fat" ? 48 : kind === "office" ? 34 : eliteStats?.range ?? 34;
     const interval = kind === "fat" ? 1.5 : kind === "office" ? 1.15 : eliteStats?.interval ?? 1.15;
     s.entities.push({
@@ -1010,7 +1018,12 @@ export default function Home() {
                 });
                 // Attack frame 3 extends the right fist to the sprite's front edge.
                 // Anchor the wave there so it visibly leaves the knuckles.
-                s.shockwaves.push({ x: e.x + 48, y: BATTLE_FLOOR - 87, age: 0, maxAge: 0.52 });
+                s.shockwaves.push({
+                  x: e.x + 48,
+                  y: BATTLE_FLOOR - 87 + HYPERMAN_RENDER_Y_OFFSET,
+                  age: 0,
+                  maxAge: 0.52,
+                });
               } else if (e.kind === "mu" && target) {
                 const victims = s.entities.filter(
                   (candidate) =>
@@ -1373,7 +1386,6 @@ export default function Home() {
           <section className="menu-screen">
             <div className="menu-shade" />
             <div className="title-block">
-              <div className="title-kicker">理不尽なゾンビ軍団を迎え撃つ超シリアスで真面目なクソゲー</div>
               <h1>Fxxinng<br /><span>DEFENSE</span></h1>
             </div>
             <div className="material-chip">🔩 強化資材 <strong>{save.materials}</strong></div>
@@ -1836,7 +1848,8 @@ function drawGame(
                       : 106;
     const x = e.x - size / 2;
     const bob = e.kind === "zeus" ? Math.sin(e.animClock * Math.PI * 1.25) * 4 : 0;
-    const y = BATTLE_FLOOR - size + bob;
+    const renderYOffset = e.kind === "hyperman" ? HYPERMAN_RENDER_Y_OFFSET : 0;
+    const y = BATTLE_FLOOR - size + bob + renderYOffset;
     const isZeusDeath = e.kind === "zeus" && e.deadClock !== undefined;
     if (isZeusDeath) {
       const t = e.deadClock || 0;
