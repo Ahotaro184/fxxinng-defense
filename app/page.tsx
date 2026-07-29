@@ -89,7 +89,7 @@ const STANDARD_ENEMY_STATS: Record<
 > = {
   1: { office: { hp: 100, damage: 12 }, fat: { hp: 380, damage: 40 } },
   2: { office: { hp: 130, damage: 16 }, fat: { hp: 500, damage: 52 } },
-  3: { office: { hp: 170, damage: 21 }, fat: { hp: 650, damage: 66 } },
+  3: { office: { hp: 153, damage: 19 }, fat: { hp: 585, damage: 59 } },
   4: { office: { hp: 210, damage: 27 }, fat: { hp: 720, damage: 82 } },
   5: { office: { hp: 210, damage: 27 }, fat: { hp: 720, damage: 82 } },
 };
@@ -109,17 +109,18 @@ const ELITE_ENEMY_STATS: Record<
     interval: BLADE_CONFIG.interval,
   },
 };
+const STAGE_3_SIXARM_STATS = { hp: 2700, damage: 113 } as const;
 
 const HERO_PATROL_LIMIT_RATIO: Record<UnitKind, number> = {
-  gunslinger: 0.48,
+  gunslinger: 0.6,
   riot: 0.58,
-  rifleman: 0.48,
+  rifleman: 0.6,
   oniyama: 0.6,
   hyperman: 0.61,
   mu: 0.57,
 };
-const RANGED_HERO_LIMIT_RATIO = 0.48;
-const HERO_CHASE_LIMIT_RATIO = 0.7;
+const RANGED_HERO_LIMIT_RATIO = 0.6;
+const HERO_CHASE_LIMIT_RATIO = 0.68;
 const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
   gunslinger: 9,
   riot: 9,
@@ -684,8 +685,11 @@ export default function Home() {
       kind === "executioner" || kind === "sixarm" || kind === "zeus" || kind === "blade"
         ? ELITE_ENEMY_STATS[kind]
         : null;
-    const hp = standardStats?.hp ?? eliteStats?.hp ?? 1;
-    const damage = standardStats?.damage ?? eliteStats?.damage ?? 1;
+    const stageThreeSixarmStats =
+      stage === 3 && kind === "sixarm" ? STAGE_3_SIXARM_STATS : null;
+    const hp = stageThreeSixarmStats?.hp ?? standardStats?.hp ?? eliteStats?.hp ?? 1;
+    const damage =
+      stageThreeSixarmStats?.damage ?? standardStats?.damage ?? eliteStats?.damage ?? 1;
     const speed = kind === "fat" ? 8 : kind === "office" ? 15 : eliteStats?.speed ?? 15;
     const range = kind === "fat" ? 48 : kind === "office" ? 34 : eliteStats?.range ?? 34;
     const interval = kind === "fat" ? 1.5 : kind === "office" ? 1.15 : eliteStats?.interval ?? 1.15;
