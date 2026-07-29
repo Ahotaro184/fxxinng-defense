@@ -81,6 +81,7 @@ const ZEUS_LIGHTNING_RADIUS = 72;
 const DURATION = 180;
 const MAX_ALLIES = 50;
 const MAX_BATTLE_COINS = 999;
+const INITIAL_COIN_UPGRADE_AMOUNT = 50;
 const NORMAL_ZOMBIE_SPEED = 12.75;
 const FAT_ZOMBIE_SPEED = 6.8;
 const STORAGE_KEY = "fxxinng-turret-save-v1";
@@ -124,8 +125,8 @@ const HERO_PATROL_LIMIT_RATIO: Record<UnitKind, number> = {
 };
 const RANGED_HERO_LIMIT_RATIO = 0.6;
 const HERO_CHASE_LIMIT_RATIO = 0.68;
-const ONIYAMA_FIRST_HIT_DAMAGE = 108;
-const ONIYAMA_SECOND_HIT_DAMAGE = 135;
+const ONIYAMA_FIRST_HIT_DAMAGE = 70;
+const ONIYAMA_SECOND_HIT_DAMAGE = 88;
 const ONIYAMA_AREA_RADIUS = 60;
 const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
   gunslinger: 9,
@@ -137,7 +138,7 @@ const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
 };
 const MU_BATTLE_SPRITE_SIZE = 54;
 const MU_WALK_FRAME_SEQUENCE = [0, 2, 3, 4, 5, 4] as const;
-const HYPERMAN_RENDER_Y_OFFSET = -34;
+const HYPERMAN_RENDER_Y_OFFSET = -17;
 
 const DEFAULT_SAVE: SaveData = {
   version: 2,
@@ -171,7 +172,7 @@ const UNITS: Record<
     label: "伊集院 ひろし",
     subtitle: "コッキング職人",
     cost: 50,
-    cooldown: 4,
+    cooldown: 8,
     hp: 160,
     damage: 34,
     speed: 12.5,
@@ -183,7 +184,7 @@ const UNITS: Record<
     label: "佐藤 剛",
     subtitle: "盾で殴るだけ",
     cost: 80,
-    cooldown: 8,
+    cooldown: 10,
     hp: 1200,
     damage: 25,
     speed: 9,
@@ -552,7 +553,7 @@ export default function Home() {
       const maxBase = Math.round(2000 * (1 + save.upgrades.base * 0.15));
       const startingCoins = Math.min(
         MAX_BATTLE_COINS,
-        100 + save.upgrades.initialCoins * 100,
+        100 + save.upgrades.initialCoins * INITIAL_COIN_UPGRADE_AMOUNT,
       );
       stateRef.current = {
         entities: [],
@@ -1453,8 +1454,8 @@ export default function Home() {
             <UpgradeCard icon="⌂" title="拠点耐久強化" detail="拠点最大HP +15%" level={save.upgrades.base} materials={save.materials} onBuy={() => buyUpgrade("base")} />
             <UpgradeCard
               icon="◉"
-              title="初期コイン増加"
-              detail={`戦闘開始時の所持コイン +100（現在 ${100 + save.upgrades.initialCoins * 100}）`}
+              title="初期現ナマUP"
+              detail={`戦闘開始時の所持金 +${INITIAL_COIN_UPGRADE_AMOUNT}（現在 ${100 + save.upgrades.initialCoins * INITIAL_COIN_UPGRADE_AMOUNT}）`}
               level={save.upgrades.initialCoins}
               maxLevel={4}
               materials={save.materials}
