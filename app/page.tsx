@@ -134,6 +134,7 @@ const HERO_COLLISION_RADIUS: Record<UnitKind, number> = {
   mu: 4.5,
 };
 const MU_BATTLE_SPRITE_SIZE = 54;
+const MU_WALK_FRAME_SEQUENCE = [0, 2, 3, 4, 5, 4] as const;
 
 const DEFAULT_SAVE: SaveData = {
   version: 2,
@@ -1273,7 +1274,7 @@ export default function Home() {
       s.lightnings = s.lightnings.filter((x) => x.age < x.maxAge);
       s.groundSpikes.forEach((x) => (x.age += dt));
       s.groundSpikes = s.groundSpikes.filter((x) => x.age < x.maxAge);
-      drawGame(canvasRef.current, s, image);
+      drawGame(canvasRef.current, s, image, now / 1000);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -1568,7 +1569,7 @@ export default function Home() {
                   </Modal>
                 )}
                 {overlay === "gameover" && (
-                  <Modal kicker="MISSION FAILED" title="BASE DESTROYED">
+                  <Modal kicker="MISSION FAILED" title="Defeat...">
                     <p>拠点がゾンビに食われました。</p>
                     <button className="modal-danger" onClick={retryAfterGameOver}>再プレイ</button>
                     <button onClick={returnMenuFromGameOver}>メニューに戻る</button>
@@ -1753,6 +1754,7 @@ function drawGame(
     stage: number;
   },
   getImage: (src: string) => HTMLImageElement,
+  renderTime: number,
 ) {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -1804,7 +1806,11 @@ function drawGame(
     const frame = e.anim === "death"
       ? Math.min(count - 1, Math.floor(e.animClock * fps))
       : Math.floor(e.animClock * fps) % count;
-    const src = `/game/sprites/${e.kind}/${e.anim}/${String(frame).padStart(2, "0")}.png`;
+    const imageFrame =
+      e.kind === "mu" && e.anim === "walk"
+        ? MU_WALK_FRAME_SEQUENCE[frame % MU_WALK_FRAME_SEQUENCE.length]
+        : frame;
+    const src = `/game/sprites/${e.kind}/${e.anim}/${String(imageFrame).padStart(2, "0")}.png`;
     const im = getImage(src);
     const size =
       e.kind === "sixarm"
@@ -1879,14 +1885,22 @@ function drawGame(
       const hpY = e.kind === "oniyama" ? BATTLE_FLOOR - 108 : y + 5;
       ctx.fillStyle = "rgba(0,0,0,.72)";
       ctx.fillRect(e.x - hpW / 2 - 1, hpY, hpW + 2, 6);
-      ctx.fillStyle = e.invincible ? "#ffd34e" : e.team === "ally" ? "#4ee88b" : "#ef4b43";
-      ctx.fillRect(e.x - hpW / 2, hpY + 1, hpW * (e.hp / e.maxHp), 4);
-      if (e.invincible) {
-        ctx.fillStyle = "#fff5b8";
-        ctx.font = "900 11px system-ui";
-        ctx.textAlign = "center";
-        ctx.fillText("∞", e.x, hpY - 2);
+      if (e.kind === "mu") {
+        const rainbow = ctx.createLinearGradient(
+          e.x - hpW / 2,
+          hpY,
+          e.x + hpW / 2,
+          hpY,
+        );
+        for (let colorIndex = 0; colorIndex <= 7; colorIndex += 1) {
+          const hue = (renderTime * 110 + colorIndex * (360 / 7)) % 360;
+          rainbow.addColorStop(colorIndex / 7, `hsl(${hue} 96% 58%)`);
+        }
+        ctx.fillStyle = rainbow;
+      } else {
+        ctx.fillStyle = e.invincible ? "#ffd34e" : e.team === "ally" ? "#4ee88b" : "#ef4b43";
       }
+      ctx.fillRect(e.x - hpW / 2, hpY + 1, hpW * (e.hp / e.maxHp), 4);
     }
   });
 
