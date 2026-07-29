@@ -265,17 +265,8 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
   right: 9px;
   bottom: 8px;
 }
-.stage-card-info strong {
-  display: block;
-  overflow: hidden;
-  color: white;
-  font: 800 clamp(9px, 2.35vw, 13px)/1.2 system-ui;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 .stage-card-info em {
   display: block;
-  margin-top: 4px;
   color: var(--yellow);
   font: 700 clamp(8px, 2vw, 11px)/1 system-ui;
   font-style: normal;
